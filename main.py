@@ -74,19 +74,57 @@ def locate_grass(img):
     upper_grass = (75, 255,255)
     return cv2.inRange(img, lower_grass, upper_grass)
 
-def locate_soccer_ball(img):
-    lower_white = (0, 0, 235)
-    upper_white = (180, 255, 255)
-    white_mask = cv2.inRange(img, lower_white, upper_white)
+# func should take the pixel value and location as arguments
+def custom_mask(img, func):
+    (w, h, _) = img.shape
+    mask = np.zeros((w, h), dtype=np.uint8)
+    for r in range(w):
+        for c in range(h):
+            pix = img[r][c]
+            include = func(pix, (r, c))
+            if include:
+                mask[r][c] = 255
+    print(mask.shape)
+    return mask
+
+def soccer_ball_mask_func(pix, _):
+    (_, s, v) = pix
+    """if v < 20:
+        return True
+    ex_val = min(v, 255 - v)
+    inclusion_score = (s + ex_val*0.5) / (255 + 255*0.5)
+    return inclusion_score < 0.4"""
+    return v < 20 or s < 80
+
+
+def locate_soccer_ball(img, background=None):
+    # When finding white colors, we replace the background with a black color so it isn't selected
+    """for_white = img
+    if background:
+        for_white = remove_color(img, background[0], background[1], replace=(0, 0, 0))
+    lower_white = (0, 0, 120)
+    upper_white = (180, 100, 255)
+    white_mask = cv2.inRange(for_white, lower_white, upper_white)
+    print(white_mask.shape)
+    # Similarly, when finding black colors, we replace the background with white
+    for_black = img
+    if background:
+        for_black = remove_color(img, background[0], background[1], replace=(0, 0, 255))
     lower_black = (0, 0, 0)
-    upper_black = (180, 140, 60)
-    black_mask = cv2.inRange(img, lower_black, upper_black)
+    upper_black = (180, 180, 120)
+    black_mask = cv2.inRange(for_black, lower_black, upper_black)
     cv2.imshow('White mask', white_mask)
     cv2.imshow('Black mask', black_mask)
     combined = combine_masks(white_mask, black_mask)
-    return combined
+    return combined"""
+    return custom_mask(img, soccer_ball_mask_func)
 
-
+def remove_color(img, lower, upper, replace=(0, 0, 0)):
+    removed = img.copy()
+    mask = cv2.inRange(removed, lower, upper)
+    mask = invert_mask(mask)
+    removed[np.where(mask==[0])] = replace
+    return removed
 
 def image_to_hsv(img):
     return cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
@@ -157,6 +195,27 @@ def largest_contour(cons):
             largest_area = area
     return largest_index
 
+def most_circular_contour(cons, min_area=0, max_area=1000000000):
+    if len(cons) == 0:
+        print('Cannot find most circular contour in empty array.')
+        return -1
+    best_index = -1
+    best_aspect = 0
+    for (i, con) in enumerate(cons):
+        if len(con) == 1:
+            continue
+        area = cv2.contourArea(con)
+        if area < min_area or area > max_area:
+            continue
+        x,y,w,h = cv2.boundingRect(con)
+        aspect_ratio = float(w)/h
+        if aspect_ratio < 1:
+            aspect_ratio = 1/aspect_ratio
+        if best_index == -1 or aspect_ratio < best_aspect:
+            best_index = i
+            best_aspect = aspect_ratio
+    return best_index
+
 # Finds magnitude of a vector in two-dimensional coordinate space
 def mag(x, y):
     return math.sqrt(x*x + y*y)
@@ -182,35 +241,67 @@ def contour_avg_dist(con, center):
 def approx_contour_as_circle(con):
     center = contour_center(con)
     avg_rad = contour_avg_dist(con, center)
-    return [center[0], center[1], int(np.round(avg_rad)) - 5]
+    return [center[0], center[1], avg_rad]
 
 def greyscale(img):
     return cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
-img = read_image('sample.jpg')
+def normalize_sv(hsv):
+    mean = cv2.mean(hsv)
+    (w, h, _) = hsv.shape
+    s_mult = 128 / mean[1]
+    v_mult = 128 / mean[2]
+    for r in range(w):
+        for c in range(h):
+            pix = hsv[r][c]
+            pix[1] = int(pix[1] * s_mult)
+            pix[2] = int(pix[2] * v_mult)
+
+img = read_image('sample9.jpg')
 
 # We convert to HSV to locate the grass, but don't use it other than that right now
 hsv = image_to_hsv(img)
+#normalize_sv(hsv)
 #mask = locate_grass(hsv)
 mask = locate_soccer_ball(hsv)
+print(mask)
 #inv_mask = invert_mask(mask)
 inv_mask = mask
 applied = apply_mask(img, inv_mask)
 
 cv2.imshow('Original', img)
-cv2.imshow('Masked', applied)
+#cv2.imshow('Masked', applied)
 cv2.imshow('Mask', mask)
 
 contours = find_contours(inv_mask)
-cv2.drawContours(img, contours,  -1, (255,0,0), 2)
-cv2.imshow('Contours', img)
+img_with_contours = img.copy()
+cv2.drawContours(img_with_contours, contours,  -1, (255,0,0), 2)
+cv2.imshow('Contours', img_with_contours)
 largest_ind = largest_contour(contours)
-largest = contours[largest_ind]
+#largest_ind = most_circular_contour(contours)
+if largest_ind == -1:
+    print('Done.')
+else:
+    largest = contours[largest_ind]
 
-(x, y, r) = approx_contour_as_circle(largest)
+    """img_cp = img.copy()
+    print('Best contour area: %f' % cv2.contourArea(largest))
+    cv2.drawContours(img_cp, [largest], -1, (255,0,0), 2)
+    cv2.imshow('Largest contour', img_cp)"""
 
-cv2.circle(img, (x, y), r, (0, 255, 0), 2)
-cv2.imshow('Final', img)
+    (x, y, r) = approx_contour_as_circle(largest)
+
+    print('Contour diameter: %f' % (2.0*r))
+
+    r -= 5
+    r = int(round(r))
+
+    img_with_circle = img.copy()
+    cv2.circle(img_with_circle, (x, y), r, (0, 255, 0), 2)
+    cv2.imshow('Final', img_with_circle)
+
+hough_circles = find_circles(inv_mask, dp=1, minDist=1, minRadius=0, maxRadius=100000000000)
+print(hough_circles)
 
 cv2.waitKey(0)
 cv2.destroyAllWindows()
