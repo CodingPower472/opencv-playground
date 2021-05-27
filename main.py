@@ -2,6 +2,7 @@
 import cv2
 import numpy as np
 import math
+import center_curvature
 
 print('Program initiating.');
 print('OpenCV-Python version: %s' % cv2.__version__)
@@ -84,7 +85,6 @@ def custom_mask(img, func):
             include = func(pix, (r, c))
             if include:
                 mask[r][c] = 255
-    print(mask.shape)
     return mask
 
 def soccer_ball_mask_func(pix, _):
@@ -103,7 +103,7 @@ def locate_soccer_ball(img, background=None):
     if background:
         for_white = remove_color(img, background[0], background[1], replace=(0, 0, 0))
     lower_white = (0, 0, 120)
-    upper_white = (180, 100, 255)
+    upper_white = (180, 30, 255)
     white_mask = cv2.inRange(for_white, lower_white, upper_white)
     print(white_mask.shape)
     # Similarly, when finding black colors, we replace the background with white
@@ -151,6 +151,7 @@ def find_circles(img, dp=1, minDist=1, param1 = 50, param2 = 30, minRadius=1, ma
 # Method below adapted from https://stackoverflow.com/questions/43841210/how-to-detect-circle-in-a-binary-image
 def find_contours(img):
     blurred = cv2.blur(img, (7, 7), 0)
+    cv2.imshow('Actual blurred', blurred)
     thresh = cv2.adaptiveThreshold(blurred,255,cv2.ADAPTIVE_THRESH_MEAN_C,cv2.THRESH_BINARY_INV,11,2)
 
     contours,hierarchy = cv2.findContours(thresh.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -257,14 +258,13 @@ def normalize_sv(hsv):
             pix[1] = int(pix[1] * s_mult)
             pix[2] = int(pix[2] * v_mult)
 
-img = read_image('sample9.jpg')
+img = read_image('sample2.jpg')
 
 # We convert to HSV to locate the grass, but don't use it other than that right now
 hsv = image_to_hsv(img)
 #normalize_sv(hsv)
 #mask = locate_grass(hsv)
 mask = locate_soccer_ball(hsv)
-print(mask)
 #inv_mask = invert_mask(mask)
 inv_mask = mask
 applied = apply_mask(img, inv_mask)
@@ -274,15 +274,24 @@ cv2.imshow('Original', img)
 cv2.imshow('Mask', mask)
 
 contours = find_contours(inv_mask)
+print('Contour')
 img_with_contours = img.copy()
 cv2.drawContours(img_with_contours, contours,  -1, (255,0,0), 2)
 cv2.imshow('Contours', img_with_contours)
 largest_ind = largest_contour(contours)
-#largest_ind = most_circular_contour(contours)
+#largest_ind = -1
+#largest_ind = 0
+largest_ind = most_circular_contour(contours)
 if largest_ind == -1:
     print('Done.')
 else:
     largest = contours[largest_ind]
+
+    curv = center_curvature.approx_center_curvature(img, largest)
+    curv = center_curvature.tup_float_to_int(curv)
+    with_points = img.copy()
+    center_curvature.draw_points(with_points, [curv], radius=5)
+    cv2.imshow('Curvature', with_points)
 
     """img_cp = img.copy()
     print('Best contour area: %f' % cv2.contourArea(largest))
@@ -296,8 +305,11 @@ else:
     r -= 5
     r = int(round(r))
 
+    r = int(contour_avg_dist(largest, curv)) - 5
+
     img_with_circle = img.copy()
-    cv2.circle(img_with_circle, (x, y), r, (0, 255, 0), 2)
+    #cv2.circle(img_with_circle, (x, y), r, (0, 255, 0), 2)
+    cv2.circle(img_with_circle, curv, r, (0, 255, 0), 2)
     cv2.imshow('Final', img_with_circle)
 
 hough_circles = find_circles(inv_mask, dp=1, minDist=1, minRadius=0, maxRadius=100000000000)
